@@ -12,6 +12,7 @@ Home Automation from the smartphone, using the Blynk app and library on ESP8266&
   * Support for DS180B20 Digital Thermometer (C / F)
   * Support for Relays for Light Control (Don't die playing with mains please.)
   * Can do specific tasks like feed fish, move a servo, all controlled from the smartphone, or done timeously.
+  * Serial communication between another MC, (more pins and different loop timing.)
   
 ### PLEASE give me feedback
 
