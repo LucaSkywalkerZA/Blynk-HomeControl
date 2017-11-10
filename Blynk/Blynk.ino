@@ -27,7 +27,7 @@ int DC_PIN = 12; // or D6 On WeMosD1
 
 AnyOLED_SSD1306 display(SCL_PIN, SDA_PIN, DC_PIN, RST_PIN);
 
-char auth[] = "f4d15ba5b2e94e8296345ea45a932965";
+char auth[] = "x";
 
 //Wifi Networks//////////////////////////////
 
