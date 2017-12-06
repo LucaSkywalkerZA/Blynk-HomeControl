@@ -10,8 +10,10 @@
 #include <AnyOLED_SSD1306.h>
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
+#include <TimeLib.h>
+#include <WidgetRTC.h>
 OneWire  ds(14);
-
+WidgetRTC rtc;
 HTTPClient http;
 ESP8266WiFiMulti WiFiMulti;
 
@@ -27,7 +29,7 @@ int DC_PIN = 12; // or D6 On WeMosD1
 
 AnyOLED_SSD1306 display(SCL_PIN, SDA_PIN, DC_PIN, RST_PIN);
 
-char auth[] = "x";
+char auth[] = "f4d15ba5b2e94e8296345ea45a932965";
 
 //Wifi Networks//////////////////////////////
 
@@ -39,14 +41,16 @@ boolean tplink898 = false;
 char ssid[] = "TP-LINK_898542";
 char pass[] = "84281906";
 
-boolean w15881a = false;
-char ssid2[] = "15881a";
-char pass2[] = "277400272";
+boolean arris = false;
+char ssid2[] = "ARRIS-8312";
+char pass2[] = "2WR133301538";
 
 //////////////////////////////////////////////
 
 boolean ledState = false;
 boolean displayed = false;
+bool twat = false;
+bool swit = false;
 float toTweet = 0;
 int count = 0;
 int red = 0;
@@ -60,17 +64,20 @@ int hou = 0;
 int days = 0;
 int math;
 int Vo;
-//OLED
-
+int last;
+int prehour;
+int randhour;
+long milimath;
 long mincount = 0;
 long fishcount = 86400000;
-long twitcount = 86400000;
 Servo servo1;
 String b;
 String place;
 String store;
 String newip;
 String found;
+String twt;
+String rt, uptime;
 //Blynk declarations
 WidgetTerminal terminal(V0);
 BLYNK_WRITE(V0)
@@ -841,9 +848,9 @@ void setup()
       iPhone7 = true;
       Serial.println("iPhone 7 Found");
     }
-    if (check.equals("15881a")) {
-      w15881a = true;
-      Serial.println("15881a Found");
+    if (check.equals("ARRIS-8312")) {
+      arris = true;
+      Serial.println("ARRIS-8312 Found");
     }
     if (check.equals("TP-LINK_898542")) {
       tplink898 = true;
@@ -860,6 +867,16 @@ void setup()
     LED_P8x16Str(0, 2, "iPhone 7");
     delay(1000);
   }
+  else if (arris == true) {
+    LED_P8x16Str(0, 4, "Trying:");
+    delay(1000);
+    LED_P8x16Str(0, 6, "ARRIS-8312");
+    Blynk.begin(auth, ssid2, pass2);
+    LED_Fill(0x00);
+    LED_P8x16Str(0, 0, "Connected:");
+    LED_P8x16Str(0, 2, "ARRIS-8312");
+    delay(1000);
+  }
   else if (tplink898 == true) {
     LED_P8x16Str(0, 4, "Trying:");
     delay(1000);
@@ -868,16 +885,6 @@ void setup()
     LED_Fill(0x00);
     LED_P8x16Str(0, 0, "Connected:");
     LED_P8x16Str(0, 2, "TP-LINK_898542");
-    delay(1000);
-  }
-  else if (w15881a == true) {
-    LED_P8x16Str(0, 4, "Trying:");
-    delay(1000);
-    LED_P8x16Str(0, 6, "15881a");
-    Blynk.begin(auth, ssid2, pass2);
-    LED_Fill(0x00);
-    LED_P8x16Str(0, 0, "Connected:");
-    LED_P8x16Str(0, 2, "15881a");
     delay(1000);
   }
   else
@@ -899,6 +906,7 @@ void setup()
   terminal.flush();
   LED_Fill(0x00);
   LED_P8x16Str(0, 0, "WeatherMos");
+  rtc.begin();
 }
 void loop()
 {
@@ -907,14 +915,10 @@ void loop()
   lightControl();
   thermo();
   tagSetter();
-  //servo();
-  uptime();
-  //feedTheFish();
+  Uptime();
   bitcoin();
-  eurZar();
   twit();
-  serialRead();
-  serialWrite();
+  show();
   terminal.flush();
 }
 void showIP()
@@ -1087,11 +1091,7 @@ void tagSetter()
     }
   }
 }
-void servo()
-{
-  servo1.write(sliderValue2);
-}
-void uptime()
+void Uptime()
 {
   math = millis() - mincount;
   if (math > 0)
@@ -1108,7 +1108,7 @@ void uptime()
         hou = 0;
       }
     }
-    String uptime = "Up: ";
+    uptime = "Up: ";
     if (minu < 10 && hou < 10 && days < 10) //10-10-10
     {
       uptime = uptime + "0" + days + ":0" + hou + ":0" + minu;
@@ -1141,55 +1141,65 @@ void uptime()
     {
       uptime = uptime + "" + days + ":" + hou + ":" + minu;
     }
-    int TempNumOne2 = sizeof(uptime);
-    char uptime2[100];
-    for (int a = 0; a <= TempNumOne2; a++)
-    {
-      uptime2[a] = uptime[a];
-    }
-    LED_P8x16Str(0, 4, uptime2);
   }
-}
-void feedTheFish()
-{
-  math = millis() - fishcount;
-  if (math > 0)
+  rt = "RT: ";
+  if (second() < 10 && minute() < 10 && hour() < 10) //10-10-10
   {
-    fishcount = fishcount + 86400000;
-    servo1.write(90);
-    delay(100);
-    servo1.write(0);
-    delay(100);
-    servo1.write(90);
-    delay(100);
-    servo1.write(0);
-    Serial.println("Fish Fed");
+    rt = rt + "0" + hour() + ":0" + minute() + ":0" + second();
+  }
+  else if (second() < 10 && minute() < 10 && hour() > 9)//10-10-9
+  {
+    rt = rt + "" + hour() + ":0" + minute() + ":0" + second();
+  }
+  else if (second() < 10 && minute() > 9 && hour() < 10) //10-9-10
+  {
+    rt = rt + "0" + hour() + ":" + minute() + ":0" + second();
+  }
+  else if (second() < 10 && minute() > 9 && hour() > 9) //10-9-9
+  {
+    rt = rt + "" + hour() + ":" + minute() + ":0" + second();
+  }
+  else if (second() > 9 && minute() < 10 && hour() < 10) //9-10-10
+  {
+    rt = rt + "0" + hour() + ":0" + minute() + ":" + second();
+  }
+  else if (second() > 9 && minute() < 10 && hour() > 9) //9-10-9
+  {
+    rt = rt + "" + hour() + ":0" + minute() + ":" + second();
+  }
+  else if (second() > 9 && minute() > 9 && hour() < 10) //9-9-10
+  {
+    rt = rt + "0" + hour() + ":" + minute() + ":" + second();
+  }
+  else if (second() > 9 && minute() > 9 && hour() > 9)//9-9-9
+  {
+    rt = rt + "" + hour() + ":" + minute() + ":" + second();
   }
 }
 void twit()
 {
-  math = millis() - twitcount;
-  if (math > 0)
+  twt = "The temperature in #Malta is :";
+  twt = twt + " " + toTweet + "°C";
+  twt = twt + " at " + hour() + ":" + minute() + ":" + second() + " while BTC/USD price: $" + last;
+  if (hour() == 0 && prehour == 23)
   {
-    twitcount = twitcount + 86400000;
-    String twt = "The temperature in #Malta is :";
-    twt = twt + " " + toTweet + "°C";
-    Blynk.tweet(twt);
-    Serial.println("I Tweeted!");
+    randhour = random(5, 23);
+    String ttwat = "Randhour set to: ";
+    ttwat += "" + randhour;
+    terminal.println(ttwat);
+    twat = false;
   }
-}
-void serialRead()
-{
-  //    if (Serial.available() > 0) {
-  //    inc = Serial.readString();
-  //    terminal.println(inc);
-}
-void serialWrite()
-{
-  //if (millis() > count) {
-  //count = count + 1000;
-  //Serial.println("Blep");
-  //}
+  if (hour() == randhour && twat == false)
+  {
+    if (millis() > 100000)
+    {
+      Blynk.tweet(twt);
+      Serial.println("I Tweeted!");
+      terminal.println("I Tweeted!");
+      twat = true;
+    }
+  }
+  prehour = hour();
 }
 void bitcoin()
 {
@@ -1203,17 +1213,9 @@ void bitcoin()
       JsonObject& root = jsonBuffer.parseObject(payload);
       JsonObject& bpi = root["bpi"];
       JsonObject& bpi_EUR = bpi["USD"];
-      int last = bpi_EUR["rate_float"];
-      String sSSID = "📈 1 bitcoin = $ ";
-      sSSID += last;
-      sSSID += ",-";
-      Serial.println(sSSID.c_str());
-      String bitScreen = "BTC/USD$";
+      last = bpi_EUR["rate_float"];
+      String bitScreen = "BTC $";
       bitScreen += last;
-      //int len = 12 - bitScreen.length();
-      //for (int i = 0; i < len; i++) {
-      //  bitScreen += " ";
-      //}
       int numbercount = sizeof(bitScreen);
       char bitScreenB[100];
       for (int a = 0; a <= numbercount; a++)
@@ -1224,11 +1226,44 @@ void bitcoin()
     } else {
       Serial.print("Failed to request coindesk API - is the internet connection active? Return code: ");
     }
-
     http.end();
     next_refresh = millis() + 5000;
   }
 }
-void eurZar()
+void Switch()
 {
+  if (swit == false)
+  {
+    swit = true;
+  }
+  else
+  {
+    swit = false;
+  }
+}
+void show()
+{
+  if (millis() > milimath)
+  {
+    Switch();
+    milimath += 10000;
+  }
+  char uptime2[100];
+  if (swit)
+  {
+    int TempNumOne2 = sizeof(uptime);
+    for (int a = 0; a <= TempNumOne2; a++)
+    {
+      uptime2[a] = uptime[a];
+    }
+  }
+  else
+  {
+    int TempNumOne2 = sizeof(rt);
+    for (int a = 0; a <= TempNumOne2; a++)
+    {
+      uptime2[a] = rt[a];
+    }
+  }
+  LED_P8x16Str(0, 4, uptime2);
 }
