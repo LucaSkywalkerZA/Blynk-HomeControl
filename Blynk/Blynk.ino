@@ -12,11 +12,26 @@
 #include <ESP8266HTTPClient.h>
 #include <TimeLib.h>
 #include <WidgetRTC.h>
+#include <Adafruit_NeoPixel.h>
+#include <PubSubClient.h>
+#ifdef __AVR__
+#include <avr/power.h>
+#endif
+#define PIN 2
+#define NUM_LEDS 1
 OneWire  ds(14);
 WidgetRTC rtc;
+WiFiClient espClient;
+PubSubClient client(espClient);
 HTTPClient http;
 ESP8266WiFiMulti WiFiMulti;
-
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, PIN, NEO_GRB + NEO_KHZ800);
+const char* mqttServer = "m23.cloudmqtt.com";
+const int mqttPort = 12638;
+const char* mqttUser = "qhruzwxc";
+const char* mqttPassword = "Y0D-Ury4fmu6";
+String message = "";
+String top = "";
 const int httpPort = 80;
 const String url = "http://api.coindesk.com/v1/bpi/currentprice.json";
 unsigned long next_refresh = 0;
@@ -49,16 +64,15 @@ char pass2[] = "2WR133301538";
 
 boolean ledState = false;
 boolean displayed = false;
+boolean state = false;
 bool twat = false;
 bool swit = false;
-float toTweet = 0;
+long delayed = 0;
 int count = 0;
 int red = 0;
 int green = 0;
 int blue = 0;
-int sliderValue2 = 0;
 int btnValue1 = 0;
-int btnValue2 = 0;
 int minu = -1;
 int hou = 0;
 int days = 0;
@@ -66,7 +80,23 @@ int math;
 int Vo;
 int last;
 int prehour;
-int randhour;
+int randhour, randmin, randsec;
+
+//temp
+int ThermistorPin = 0;
+float R1 = 10000;
+float logR2, R2, T;
+float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;
+float toTweet = 0;
+
+//GPS
+float dist_calc = 0;
+float flat = 0;
+float flon = 0;
+float spd = 0;
+bool homeD = false;
+long waitpls = 0;
+
 long milimath;
 long mincount = 0;
 long fishcount = 86400000;
@@ -77,7 +107,8 @@ String store;
 String newip;
 String found;
 String twt;
-String rt, uptime;
+String rt, uptime, twttime;
+String lcdt;
 //Blynk declarations
 WidgetTerminal terminal(V0);
 BLYNK_WRITE(V0)
@@ -98,28 +129,26 @@ BLYNK_WRITE(V0)
 BLYNK_WRITE(V1)
 {
   btnValue1 = param.asInt();
+
+  if (btnValue1 == 1)
+  {
+    if (millis() > delayed)
+      changeLight();
+    delayed = millis() + 400;
+  }
 }
-BLYNK_WRITE(V2)
-{
-  btnValue2 = param.asInt();
-}
-BLYNK_WRITE(V3)
-{
-  sliderValue2 = param.asInt();
-}
-WidgetLCD lcd(V4);
+WidgetLED led1(V3);
 BLYNK_WRITE(V5)
 {
-  red = param.asInt();
+  flat = param[0].asFloat();
+  flon = param[1].asFloat();
+  spd = param[3].asFloat();
 }
 BLYNK_WRITE(V6)
 {
   green = param.asInt();
 }
-BLYNK_WRITE(V7)
-{
-  blue = param.asInt();
-}
+WidgetLED led2(V7);
 void LED_CLS(void);
 void LED_Set_Pos(unsigned char x, unsigned char y); //Set the coordinate
 void LED_WrDat(unsigned char data);   //Write Data
@@ -815,6 +844,10 @@ void setup()
 {
   Serial.begin(115200);
   Serial.flush();
+  strip.begin();
+  strip.show();
+  strip.setPixelColor(0, 255, 0, 0);
+  strip.show();
   display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
   display.display();
   delay(2000);
@@ -896,29 +929,64 @@ void setup()
     LED_P8x16Str(0, 6, "AUTORESET");
     return;
   }
+  strip.setPixelColor(0, 0, 0, 0);
+  strip.show();
+  strip.setPixelColor(0, 0, 255, 0);
+  strip.show();
   //end of scan and shit
-  terminal.println("Blynk Succesfully Connected");
+  LED_Fill(0x00);
+  LED_P8x16Str(0, 0, "Connecting:");
+  LED_P8x16Str(0, 2, "m23.cloudmqtt");
+  client.setServer(mqttServer, mqttPort);
+  client.setCallback(callback);
+  Serial.println("Connecting to MQTT...");
+  delay(1000);
+  if (client.connect("ESP8266Client", mqttUser, mqttPassword ))
+  {
+    Serial.println("connected");
+    LED_Fill(0x00);
+    LED_P8x16Str(0, 0, "MQTT Connected");
+    delay(1000);
+  }
+  else
+  {
+    LED_Fill(0x00);
+    LED_P8x16Str(0, 0, "MQTT Connection");
+    LED_P8x16Str(0, 2, "Failed");
+    delay(1000);
+  }
   Serial.println("Serial Connected");
+
   pinMode(V2, INPUT_PULLUP);
   pinMode(0, OUTPUT);
-  servo1.attach(2);
-  servo1.write(0);
   terminal.flush();
   LED_Fill(0x00);
-  LED_P8x16Str(0, 0, "WeatherMos");
   rtc.begin();
+  client.subscribe("mqtt/control/lights/room1");
 }
 void loop()
 {
+  while (WiFi.status() != WL_CONNECTED) {
+    strip.setPixelColor(0, 0, 0, 0);
+    strip.show();
+    delay(750);
+    strip.setPixelColor(0, 255, 0, 0);
+    strip.show();
+    delay(750);
+  }
+  client.loop();
   Blynk.run();
   showIP();
   lightControl();
   thermo();
-  tagSetter();
+  TermRead();
   Uptime();
   bitcoin();
   twit();
-  show();
+  showm();
+  colourScale();
+  distance();
+  welcome();
   terminal.flush();
 }
 void showIP()
@@ -948,13 +1016,15 @@ void showIP()
 }
 void lightControl()
 {
-  if (btnValue1 == 1)
+  if (state == true)
   {
     digitalWrite(0, HIGH);
+    led1.off();
   }
   else
   {
     digitalWrite(0, LOW);
+    led1.on();
   }
 }
 void thermo()
@@ -976,8 +1046,6 @@ void thermo()
     Serial.println("CRC is not valid!");
     return;
   }
-  //Serial.println();
-  // the first ROM byte indicates which chip
   switch (addr[0])
   {
     case 0x10:
@@ -1022,12 +1090,22 @@ void thermo()
     else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
   }
   celsius = (float)raw / 16.0;
-  toTweet = celsius;
   fahrenheit = celsius * 1.8 + 32.0;
+  toTweet = celsius;
   if (celsius > 0)
   {
-    lcd.print(0, 1, celsius);
-    lcd.print(6, 1, "C              ");
+    //Send celsius to blynk
+    celsius = round(celsius * 100.0) / 100.0;
+    Blynk.virtualWrite(V4, celsius);
+
+    //Send celsius to mqtt
+    String celsiusS = "";
+    celsiusS = celsiusS + "" + celsius;
+    client.publish("mqtt/sensors/room1/temp", (char*)celsiusS.c_str());
+    Serial.println("Temp published");
+    //
+
+    //send celsius to OLED
     String place1 = "Temp: ";
     place1 = place1 + celsius + "C";
     int TempNumOne1 = sizeof(place1);
@@ -1040,56 +1118,12 @@ void thermo()
   }
   else
   {
-    lcd.print(0, 1, "No Thermo.");
     LED_P8x16Str(0, 6, "Thermo Error");
   }
+  //
 }
-void tagSetter()
+void TermRead()
 {
-  char b2 = b.charAt(0);
-  String b3 = "" + b2;
-  if (b2 == '#')
-  {
-    for (int x = 1; x < b.length() + 1; x++)
-    {
-      place = place + b.charAt(x);
-    }
-    lcd.print(0, 0, place);
-    int len = place.length() - 1;
-    lcd.print(len, 0, "          ");
-    place = "";
-  }
-  if (b2 == '!') {
-    if (b.length() > 14 && displayed == false)
-    {
-
-      terminal.println("Max OLED display length is 12 after '!1'");
-      displayed = true;
-    }
-    else if (b.length() > 14)
-    {
-
-    }
-    else
-    {
-      for (int x = 2; x < b.length() + 2; x++)
-      {
-        place = place + b.charAt(x);
-      }
-      int len = place.length() - 1;
-      int row = b.charAt(1) - '0';
-      row--;
-      int row2 = row * 2; //
-      int TempNumOne = sizeof(place);
-      char Filename[100];
-      for (int a = 0; a <= TempNumOne; a++)
-      {
-        Filename[a] = place[a];
-      }
-      LED_P8x16Str(0, 0, Filename); //change to LED_P8x16Str(0,row2, Filename); to make varied rows work.
-      place = "";
-    }
-  }
 }
 void Uptime()
 {
@@ -1108,7 +1142,7 @@ void Uptime()
         hou = 0;
       }
     }
-    uptime = "Up: ";
+    uptime = "";
     if (minu < 10 && hou < 10 && days < 10) //10-10-10
     {
       uptime = uptime + "0" + days + ":0" + hou + ":0" + minu;
@@ -1141,63 +1175,64 @@ void Uptime()
     {
       uptime = uptime + "" + days + ":" + hou + ":" + minu;
     }
+    Blynk.virtualWrite(V2, uptime);
+    uptime = "Up: " + uptime;
   }
   rt = "RT: ";
+  twttime = "";
   if (second() < 10 && minute() < 10 && hour() < 10) //10-10-10
   {
-    rt = rt + "0" + hour() + ":0" + minute() + ":0" + second();
+    twttime = twttime + "0" + hour() + ":0" + minute() + ":0" + second();
   }
   else if (second() < 10 && minute() < 10 && hour() > 9)//10-10-9
   {
-    rt = rt + "" + hour() + ":0" + minute() + ":0" + second();
+    twttime = twttime + "" + hour() + ":0" + minute() + ":0" + second();
   }
   else if (second() < 10 && minute() > 9 && hour() < 10) //10-9-10
   {
-    rt = rt + "0" + hour() + ":" + minute() + ":0" + second();
+    twttime = twttime + "0" + hour() + ":" + minute() + ":0" + second();
   }
   else if (second() < 10 && minute() > 9 && hour() > 9) //10-9-9
   {
-    rt = rt + "" + hour() + ":" + minute() + ":0" + second();
+    twttime = twttime + "" + hour() + ":" + minute() + ":0" + second();
   }
   else if (second() > 9 && minute() < 10 && hour() < 10) //9-10-10
   {
-    rt = rt + "0" + hour() + ":0" + minute() + ":" + second();
+    twttime = twttime + "0" + hour() + ":0" + minute() + ":" + second();
   }
   else if (second() > 9 && minute() < 10 && hour() > 9) //9-10-9
   {
-    rt = rt + "" + hour() + ":0" + minute() + ":" + second();
+    twttime = twttime + "" + hour() + ":0" + minute() + ":" + second();
   }
   else if (second() > 9 && minute() > 9 && hour() < 10) //9-9-10
   {
-    rt = rt + "0" + hour() + ":" + minute() + ":" + second();
+    twttime = twttime + "0" + hour() + ":" + minute() + ":" + second();
   }
   else if (second() > 9 && minute() > 9 && hour() > 9)//9-9-9
   {
-    rt = rt + "" + hour() + ":" + minute() + ":" + second();
+    twttime = twttime + "" + hour() + ":" + minute() + ":" + second();
   }
+  rt = rt + "" + twttime;
 }
 void twit()
 {
   twt = "The temperature in #Malta is :";
   twt = twt + " " + toTweet + "°C";
-  twt = twt + " at " + hour() + ":" + minute() + ":" + second() + " while BTC/USD price: $" + last;
+  twt = twt + " at " + twttime + " GMT+1 while BTC/USD price: $" + last;
   if (hour() == 0 && prehour == 23)
   {
-    randhour = random(5, 23);
-    String ttwat = "Randhour set to: ";
-    ttwat += "" + randhour;
+    randhour = random(5, 19);
+    randmin = random(0, 59);
+    randsec = random(0, 59);
+    String ttwat = "RandTime set to: ";
+    ttwat = ttwat + "" + randhour + ":" + randmin + ":" + randsec;
     terminal.println(ttwat);
     twat = false;
   }
-  if (hour() == randhour && twat == false)
+  if (hour() == randhour && minute() == randmin && second() >= randsec && twat == false)
   {
-    if (millis() > 100000)
-    {
-      Blynk.tweet(twt);
-      Serial.println("I Tweeted!");
-      terminal.println("I Tweeted!");
-      twat = true;
-    }
+    Tweet();
+    twat = true;
   }
   prehour = hour();
 }
@@ -1241,7 +1276,7 @@ void Switch()
     swit = false;
   }
 }
-void show()
+void showm()
 {
   if (millis() > milimath)
   {
@@ -1266,4 +1301,111 @@ void show()
     }
   }
   LED_P8x16Str(0, 4, uptime2);
+}
+void Tweet()
+{
+  if (millis() > 100000)
+  {
+    Blynk.tweet(twt);
+    Serial.println("I Tweeted!");
+    terminal.println("I Tweeted!");
+  }
+}
+void showStrip()
+{
+  strip.show();
+}
+void setPixel(int Pixel, byte red, byte green, byte blue)
+{
+  strip.setPixelColor(Pixel, strip.Color(red, green, blue));
+}
+void colourScale()
+{
+  int celint = (int) toTweet;
+  byte redn  = map(celint, 10, 30, 0, 255);
+  byte bluen  = map(celint, 10, 30, 255, 0);
+  strip.setPixelColor(0, redn, 0, bluen);
+  strip.show();
+}
+void changeLight()
+{
+  if (state == false)
+  {
+    state = true;
+  }
+  else
+  {
+    state = false;
+  }
+}
+void callback(char* topic, byte* payload, unsigned int length)
+{
+
+  Serial.print("Message arrived in topic: ");
+  Serial.println(topic);
+  top = topic;
+  Serial.print("Message:");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+    message = message + "" + ((char)payload[i]);
+  }
+  Serial.println("");
+  if (top.equals("mqtt/control/lights/room1")) {
+    char messageStr = message.charAt(0);
+    if (messageStr == 'c') {
+      terminal.println("MQTT Changelight");
+      changeLight();
+      delay(2);
+    }
+  }
+  message = "";
+}
+void distance()
+{
+  float flat1 = flat;   // flat1 = our current latitude. flat is from the gps data.
+  float flon1 = flon; // flon1 = our current longitude. flon is from the fps data.
+  float dist_calc2 = 0;
+  float diflat = 0;
+  float diflon = 0;
+  float x2lat = 35.904124; //enter a latitude point here   this is going to be your waypoint
+  float x2lon = 14.491113; // enter a longitude point here  this is going to be your waypoint
+  diflat = radians(x2lat - flat1); //notice it must be done in radians
+  flat1 = radians(flat1);
+  x2lat = radians(x2lat);
+  diflon = radians((x2lon) - (flon1));
+  dist_calc = (sin(diflat / 2.0) * sin(diflat / 2.0));
+  dist_calc2 = cos(flat1);
+  dist_calc2 *= cos(x2lat);
+  dist_calc2 *= sin(diflon / 2.0);
+  dist_calc2 *= sin(diflon / 2.0);
+  dist_calc += dist_calc2;
+  dist_calc = (2 * atan2(sqrt(dist_calc), sqrt(1.0 - dist_calc)));
+  dist_calc *= 6371000.0;
+  Serial.println(dist_calc);
+  Blynk.virtualWrite(V6, dist_calc);
+}
+void welcome()
+{
+  if (dist_calc < 30 && waitpls > millis())
+  {
+    led2.on();
+    if (homeD == false)
+    {
+      Blynk.notify("Welcome Home!");
+      homeD = true;
+      state = false;
+      terminal.println("User < 30m :: Light On");
+    }
+    waitpls = millis() + 10000;
+  }
+  else
+  {
+    led2.off();
+    waitpls = millis() + 10000;
+  }
+  if (hour() == 8 && minute() == 30 && second() == 0)
+  {
+    homeD = false;
+    terminal.println("Welcome Message Reset");
+  }
 }
