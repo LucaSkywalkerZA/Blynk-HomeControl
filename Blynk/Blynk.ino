@@ -28,8 +28,8 @@ ESP8266WiFiMulti WiFiMulti;
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, PIN, NEO_GRB + NEO_KHZ800);
 const char* mqttServer = "m23.cloudmqtt.com";
 const int mqttPort = 12638;
-const char* mqttUser = "qhruzwxc";
-const char* mqttPassword = "Y0D-Ury4fmu6";
+const char* mqttUser = "**";
+const char* mqttPassword = "**";
 String message = "";
 String top = "";
 const int httpPort = 80;
@@ -44,7 +44,7 @@ int DC_PIN = 12; // or D6 On WeMosD1
 
 AnyOLED_SSD1306 display(SCL_PIN, SDA_PIN, DC_PIN, RST_PIN);
 
-char auth[] = "f4d15ba5b2e94e8296345ea45a932965";
+char auth[] = "**";
 
 //Wifi Networks//////////////////////////////
 
